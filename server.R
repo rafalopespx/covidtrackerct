@@ -43,10 +43,10 @@ set.seed(1234)
 ########################################################
 ##### SET RECENT DATES (CHANGE FOR WEEKLY BUILD) #######
 
-date_3_months = as.Date(lubridate::today() - 92) # CHANGE TO MOST RECENT 3 MONTHS FOR WHO VARIANT PLOT
-date_3_weeks = as.Date(lubridate::today() - 22) # CHANGE TO MOST RECENT 3 WEEKS FOR LINEAGE PLOT
 date_gisaid = as.Date("2023-03-29") # FOR FILTERING GISAID DOWNLOAD, REFERENCE THIS DATE
-
+date_3_months = as.Date(date_gisaid - 92) # CHANGE TO MOST RECENT 3 MONTHS FOR WHO VARIANT PLOT
+date_3_weeks = as.Date(date_gisaid - 22) # CHANGE TO MOST RECENT 3 WEEKS FOR LINEAGE PLOT
+date_covidestim<-"2023-05-04" # CHANGE TO MOST RECENT DATE, FIXED UNTIL COVIDESTIM IS UP AGAIN
 
 ################# DATA CHECK LIST ######################
 
@@ -58,7 +58,8 @@ date_gisaid = as.Date("2023-03-29") # FOR FILTERING GISAID DOWNLOAD, REFERENCE T
 
 ################# STEPS #########################
 # 1. update GISAID date in server.R & ui.R
-# 2. download latest week's Connecticut metadata from GISAID based on GISAID date, search Location = Connecticut & Collection date = GISAID date, then download Patient metadata
+# 2. download latest week's Connecticut metadata from GISAID based on GISAID date, 
+# search Location = Connecticut & Collection date = GISAID date, then download Patient metadata
 # 3. download lineage designation from pangolin github, manually add latest (Omicron) lineages to variant_names.tsv file, with proper WHO variant designation
 # 4. download latest GLab metadata sheet from Google Drive
 # 5. change Table_new.csv to Table.csv, delete old Table.csv
@@ -68,7 +69,7 @@ date_gisaid = as.Date("2023-03-29") # FOR FILTERING GISAID DOWNLOAD, REFERENCE T
 ######### START SHINY APP SERVER #########
 shinyServer(function(input,output){
   
-# II. Read metadata files ########
+  # II. Read metadata files ########
   
   # we want to read metadata for all Connecticut sequences, format and filter it to add WHO variant designation and limit to sequences in the past 3 months
   
@@ -81,7 +82,8 @@ shinyServer(function(input,output){
   new_genomes = read.table(new_genomes_title, sep = "\t", header = TRUE)
   new_genomes$`Collection.date` <- as.Date(new_genomes$`Collection.date`)
   new_genomes = new_genomes %>%
-    filter(Collection.date > "2021-01-01")
+    filter(Collection.date > "2021-01-01") |> 
+    select(colnames(metadata_CT_old))
   
   # add new submissions to master file
   metadata_CT_all = rbind(metadata_CT_old,new_genomes)
@@ -144,9 +146,9 @@ shinyServer(function(input,output){
   metadata_CT_who[which(metadata_CT_who$who_variants == "Kappa"),length(colnames(metadata_CT_who))] <- 'Other'
   metadata_CT_who[which(metadata_CT_who$who_variants == "Zeta"),length(colnames(metadata_CT_who))] <- 'Other'
   metadata_CT_who[which(metadata_CT_who$who_variants == "Lambda"),length(colnames(metadata_CT_who))] <- 'Other'
-
   
-# III. Daily lineage freq in last 3 months #######
+  
+  # III. Daily lineage freq in last 3 months #######
   
   # we will now filter data to create plot for SARS-CoV-2lineage frequency in Connecticut within the last 3 months
   
@@ -157,14 +159,18 @@ shinyServer(function(input,output){
   metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days due to reporting bias
   
   # have all lineages be displayed every day, ensuring no breaks when plotting
-  lineages_daily_draft <- metadata_CT_recent %>% complete(`Collection.date`, nesting(`pango_lineage`), fill = list(CopyDate = 0))
+  lineages_daily_draft <- metadata_CT_recent %>% 
+    complete(`Collection.date`, 
+             nesting(`pango_lineage`), 
+             fill = list(CopyDate = 0))
+  
   lineages_daily_draft$`CopyDate` = ifelse(lineages_daily_draft$`Collection.date` == 0,0,1) # for counting lineages
   
   # find cumulative lineage scores & filter out minor lineages & assign colors
   lineages_sum <- metadata_CT_recent %>% group_by(`pango_lineage`) %>% count(pango_lineage) 
   
   lineages_sum = lineage_shortlist(lineages_sum)
-    
+  
   
   # add html color code to lineages
   lineages_sum = lineages_sum %>%
@@ -186,7 +192,7 @@ shinyServer(function(input,output){
     )
     )
   row.names(lineages_sum) = lineages_sum$pango_lineage
-
+  
   
   # reclassify lineages, placing minor lineages as Other
   lineages_daily_draft$`pango_lineage` = ifelse(lineages_daily_draft$`pango_lineage`%in% rownames(lineages_sum),lineages_daily_draft$`pango_lineage`,"Other")
@@ -194,7 +200,7 @@ shinyServer(function(input,output){
   lineages_daily <- lineages_daily_draft %>% group_by(`Collection.date`,`pango_lineage`) %>% 
     summarise_at(vars(`CopyDate`),list(n = sum)) %>%
     mutate(freq = round(100*n/sum(n),2)) 
-
+  
   
   # insert 3-day rolling average
   lineages_daily = lineages_daily %>%
@@ -208,12 +214,12 @@ shinyServer(function(input,output){
   # add shortened lineage names
   lineages_daily_sorted = lineage_shortlist(lineages_daily_sorted)
   rm(lineages_daily_draft)
-    
+  
   # write csv file of lineage frequency in last 3 months
   write.csv(lineages_daily_sorted,"outputs/SARS-CoV-2 lineage frequency in Connecticut in the last 3 months.csv")
-
-
-# IV. Weekly variant freq since Jan 2021 ###########
+  
+  
+  # IV. Weekly variant freq since Jan 2021 ###########
   
   # We will create a SARS-CoV-2 WHO variant frequency plot for Connecticut after January 2021
   
@@ -242,9 +248,9 @@ shinyServer(function(input,output){
                                                   "Other"))
   # write csv file of WHO variant frequency in Connecticut after Jan 2021
   write.csv(who_weekly,"outputs/SARS-CoV-2 variant frequency in Connecticut.csv")
-
   
-# V. Summary table ########
+  
+  # V. Summary table ########
   
   # Table of the composition of SARS-CoV-2 sequence submissions (to GISAID) in Connecticut
   
@@ -277,7 +283,7 @@ shinyServer(function(input,output){
   
   recent_variants_count = length(which(table1_new$`Total sequences collected from past 3 weeks**` != 0)) # find non-zero variants in past 3 weeks
   
-# VI. Sequence proportion ######
+  # VI. Sequence proportion ######
   
   # Create plot tracking SARS-CoV-2 weekly sequence proportion compared to case count in Connecticut 
   
@@ -336,7 +342,7 @@ shinyServer(function(input,output){
   )
   
   
-# VII. Ct Values by Lineages #############
+  # VII. Ct Values by Lineages #############
   
   # Create plot to compare PCR cycle threshold (Ct value) of SARS-CoV-2 samples that were sequenced and submitted by Grubaugh Lab
   
@@ -366,21 +372,21 @@ shinyServer(function(input,output){
       pango_lineage = Lineage
     )
   gc()
-
+  
   glab = lineage_shortlist(glab)
   glab <- glab %>% mutate(Ctvals = ShortLin) 
-
+  
   Ct_values <- glab %>% dplyr::filter(`Ctvals` %in% c("BA.2","BA.5","XBB"))
   rm(glab)
   gc()
   
   
-# VIII. Rt Values by Variant #############
+  # VIII. Rt Values by Variant #############
   
   # Calculate and plot effective reproduction number (Rt) for SARS-CoV-2 variant in Connecticut, based on serial interval estimation
   
   # Making API request using the GET() function and specifying the API’s URL:
-  url = paste("api2.covidestim.org/runs?geo_name=eq.Connecticut&run_date=gt.",lubridate::today() - 21,"&select=*%2Ctimeseries(*)",sep = "")
+  url = paste("api2.covidestim.org/runs?geo_name=eq.Connecticut&run_date=gt.",date_covidestim,"&select=*%2Ctimeseries(*)",sep = "")
   res = GET(url)
   
   # convert the raw Unicode into a character vector that resembles the JSON format to obtain case data
@@ -419,7 +425,6 @@ shinyServer(function(input,output){
   # load function to prep your dataset into correct format for Rt calculation
   source("functions/prepare_rt.R")
   var_merge3 = prepare_rt(var_data,infect_data)
-
   
   #creates list of dataframes by variant for calculating estimate_R
   var_list = var_merge3[[1]] %>%
@@ -429,19 +434,19 @@ shinyServer(function(input,output){
   
   
   var_name = unique(var_merge3[[1]]$variant)
-
+  
   gc()
   
   
-
-
-######## IX. TOTAL SEQUENCES ########
+  
+  
+  ######## IX. TOTAL SEQUENCES ########
   # estimate total sequences by Grubaugh Lab, may differ from submitted sequences on GISAID database
   
   old_total = read.csv("data/total_sequences.csv")
   old_total = old_total %>%
     select(-c(X))
-   # mutate(date = mdy(date))
+  # mutate(date = mdy(date))
   
   total_sequences = old_total$total[nrow(old_total)] + nrow(new_genomes[grep("Yale", new_genomes$Virus.name),]) # recalculate total
   
@@ -460,14 +465,14 @@ shinyServer(function(input,output){
   colnames(new_total_fixed) = c("Date of website update","Total number of sequences")
   write.csv(new_total_fixed,"outputs/Total number of SARS-CoV-2 sequences by Grubaugh Lab")
   
-######## X. PLOTTING ##############
+  ######## X. PLOTTING ##############
   
   # 1. Daily lineage freq in last 3 months
   
   output$lin_freq <- renderPlotly({
     
     if (input$button == "3-day rolling average") {
-      lineage_rollavg = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=`movavg`, group=`pango_lineage`, color = `pango_lineage`)) +
+      lineage_rollavg <- ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=`movavg`, group=`pango_lineage`, color = `pango_lineage`)) +
         geom_line() +
         labs(
           title = "Lineage frequencies in Connecticut (last 3 months): 3-day rolling average",
@@ -510,38 +515,38 @@ shinyServer(function(input,output){
   # 2. Weekly variant freq since 1-2021
   
   output$var_freq <- renderPlotly({
-
-      if (input$button_who == "Line chart display") {
-        who_plot = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, color = `Variant names`)) +
-          geom_line() +
-          labs(
-            title = "Weekly variant frequencies in Connecticut (since January 2021)",
-            y = "Variant frequency (%)",
-            x = "Time (weeks)"
-          ) + 
-          scale_color_manual(values = c(who_colors)) +
-          scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
-          theme_light() +
-          theme(
-            plot.title = element_text(size = 15,hjust = 0.5)
-          )
-        ggplotly(who_plot)
-      } else {
-        
-        who_plot_bar = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, fill = `Variant names`)) +
-          geom_bar(position = "fill", stat="identity") +
-          labs(
-            title = "Weekly variant frequencies in Connecticut (since January 2021)",
-            y = "Variant frequency"
-          ) + 
-          scale_fill_manual(values = c(who_colors)) +
-          scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
-          theme_light() +
-          theme(
-            plot.title = element_text(size = 15,hjust = 0.5)
-          )
-        ggplotly(who_plot_bar)
-      }
+    
+    if (input$button_who == "Line chart display") {
+      who_plot = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, color = `Variant names`)) +
+        geom_line() +
+        labs(
+          title = "Weekly variant frequencies in Connecticut (since January 2021)",
+          y = "Variant frequency (%)",
+          x = "Time (weeks)"
+        ) + 
+        scale_color_manual(values = c(who_colors)) +
+        scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
+        theme_light() +
+        theme(
+          plot.title = element_text(size = 15,hjust = 0.5)
+        )
+      ggplotly(who_plot)
+    } else {
+      
+      who_plot_bar = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, fill = `Variant names`)) +
+        geom_bar(position = "fill", stat="identity") +
+        labs(
+          title = "Weekly variant frequencies in Connecticut (since January 2021)",
+          y = "Variant frequency"
+        ) + 
+        scale_fill_manual(values = c(who_colors)) +
+        scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
+        theme_light() +
+        theme(
+          plot.title = element_text(size = 15,hjust = 0.5)
+        )
+      ggplotly(who_plot_bar)
+    }
     
   })
   
@@ -556,51 +561,51 @@ shinyServer(function(input,output){
     "Omicron (XBB)" = "#333333", 
     "Omicron (BA.5)" = "#a90505"
   )
-
+  
   
   RtData <- eventReactive(input$Go,{
     
     #*******************************************************************************
     #RT FUNCTION ####
-  #*#******************************************************************************
-  
-  #Rt Calculation
-  
-  source("functions/rt_fun.R")
-  
-  # make rt calculation into reactive one (for loading speed's sake)
-  
-  #run estimate_R function on 
-  rt = list()
-  
-  for(i in seq_along(var_list)){
-    rt[[i]] = rt_fun(var_list[[i]])
-  }
-  
-  rt_comb = bind_rows(rt)
-  
-  rt_comb = rt_comb %>%
-    mutate_all(~gsub("_infections", "", .)) 
-  
-  rt_comb = rt_comb %>%
-    mutate(days = as.Date(days)) %>%
-    left_join(var_merge3[[2]], by = c("days","variant")) %>% 
-    left_join(var_merge3[[3]], by = c("days","variant")) 
-  
-  rt_comb$variant <- factor(rt_comb$variant, 
-                            levels = c("Omicron (BA.5)",
-                                       "Omicron (XBB)",
-                                       "Omicron (BA.4)",
-                                       "Omicron (BA.2)",
-                                       "Omicron (BA.1)",
-                                       "Omicron (BA.3)",
-                                       "Delta",
-                                       "Other"))
-  write.csv(rt_comb, "outputs/SARS-CoV-2 effective reproduction number in Connecticut since November 2021.csv")
-  
-  return(list(rt_comb = rt_comb))
-  
-  
+    #*#******************************************************************************
+    
+    #Rt Calculation
+    
+    source("functions/rt_fun.R")
+    
+    # make rt calculation into reactive one (for loading speed's sake)
+    
+    #run estimate_R function on 
+    rt = list()
+    
+    for(i in seq_along(var_list)){
+      rt[[i]] = rt_fun(var_list[[i]])
+    }
+    
+    rt_comb = bind_rows(rt)
+    
+    rt_comb = rt_comb %>%
+      mutate_all(~gsub("_infections", "", .)) 
+    
+    rt_comb = rt_comb %>%
+      mutate(days = as.Date(days)) %>%
+      left_join(var_merge3[[2]], by = c("days","variant")) %>% 
+      left_join(var_merge3[[3]], by = c("days","variant")) 
+    
+    rt_comb$variant <- factor(rt_comb$variant, 
+                              levels = c("Omicron (BA.5)",
+                                         "Omicron (XBB)",
+                                         "Omicron (BA.4)",
+                                         "Omicron (BA.2)",
+                                         "Omicron (BA.1)",
+                                         "Omicron (BA.3)",
+                                         "Delta",
+                                         "Other"))
+    write.csv(rt_comb, "outputs/SARS-CoV-2 effective reproduction number in Connecticut since November 2021.csv")
+    
+    return(list(rt_comb = rt_comb))
+    
+    
   })
   
   output$rt <- renderPlot({
@@ -670,7 +675,7 @@ shinyServer(function(input,output){
               filter = "top",
               caption = htmltools::tags$caption(
                 style = 'caption-side: top; text-align: center;font-size:20px',
-
+                
                 'Summary table: SARS-CoV-2 variants in Connecticut.'),
               options = list(pageLength = recent_variants_count, 
                              dom = 'Bfrtip',
@@ -680,14 +685,14 @@ shinyServer(function(input,output){
                                "function(settings, json) {",
                                "$(this.api().table().header()).css({'background-color': '#504d49', 'color': '#fff'});",
                                "}"))
-              )
+    )
   )
   
   
   # 4. Ct values by lineage
   
   output$CT <- renderPlot({
-
+    
     intercept_char <- Ct_values %>% dplyr::filter(`Ctvals` == c("BA.2"))
     intercept <- as.numeric(intercept_char$`Yale.N1.FAM.`)
     intercept <- mean(intercept,na.rm = TRUE)
@@ -705,18 +710,18 @@ shinyServer(function(input,output){
       theme(
         plot.title=element_text(size=20),
         legend.position="none",axis.text = element_text(size = 10, color = "black",face ="bold"), 
-                            axis.title=element_text(size=12, face ="bold"))
+        axis.title=element_text(size=12, face ="bold"))
     Ct_graph
     
   })
   
-
+  
   
   # 5. seq_prop
   
   seq_prop_short = seq_prop %>% # last 10 months for better viewing of recent trends
     filter(week > (as.Date(lubridate::today() - 92) - 300))
-
+  
   seq_prop_plot = plot_ly(seq_prop) %>%
     add_bars(x = ~week, y = ~case_count, colors = "blue", 
              name = "weekly cases",data = seq_prop, showlegend=TRUE, inherit=FALSE) %>%
@@ -755,21 +760,21 @@ shinyServer(function(input,output){
     
     if (input$button_shorten == TRUE & 
         input$button_seq_prop == "Proportion of cases sequenced") {
-          ggplotly(seq_prop_plot)
-      } else {
-        if (input$button_shorten == FALSE & 
-            input$button_seq_prop == "Proportion of cases sequenced") {
+      ggplotly(seq_prop_plot)
+    } else {
+      if (input$button_shorten == FALSE & 
+          input$button_seq_prop == "Proportion of cases sequenced") {
         ggplotly(seq_prop_plot_short)
       } else {
         if (input$button_shorten == TRUE & 
             input$button_seq_prop == "Log cumulative cases-sequences") {
           ggplotly(seq_prop_log)
-      } else {
-        ggplotly(seq_prop_log_short)
+        } else {
+          ggplotly(seq_prop_log_short)
+        }
       }
-      }
-      }
-  
+    }
+    
   })
   
   
@@ -778,14 +783,14 @@ shinyServer(function(input,output){
   output$total_seq <- renderValueBox({
     
     total_sequences = new_total$total[nrow(new_total)] 
-
+    
     valueBox(
-            value = HTML("<p style='font-size:40px', text-align: center>",
-                         total_sequences,"</p>"),
-            subtitle = HTML("<p text-align: center>",
-                            "Yale SARS-CoV-2 Genomic Surveillance Initiative: <br>Genomes Published<br>"),
-            color = "orange",
-            width = 4
+      value = HTML("<p style='font-size:40px', text-align: center>",
+                   total_sequences,"</p>"),
+      subtitle = HTML("<p text-align: center>",
+                      "Yale SARS-CoV-2 Genomic Surveillance Initiative: <br>Genomes Published<br>"),
+      color = "orange",
+      width = 4
     )
   })
   
@@ -818,7 +823,7 @@ shinyServer(function(input,output){
   })
   
   # 8. Twitter 
-
+  
   output$twitter_caption <- renderInfoBox({
     
     twitter_txt = ""
@@ -838,7 +843,7 @@ shinyServer(function(input,output){
     
     infoBox(title = HTML("CovidTrackerCT:"),
             value = HTML("<p style='font-size:18px'>",
-                        "CovidTrackerCT was built and is maintained by members of the <a href = 'https://grubaughlab.com/'>Grubaugh Lab </a> at the Yale School of Public Health, New Haven, CT. 
+                         "CovidTrackerCT was built and is maintained by members of the <a href = 'https://grubaughlab.com/'>Grubaugh Lab </a> at the Yale School of Public Health, New Haven, CT. 
                         We started this website in order to share our weekly reports on SARS-CoV-2 genomic epidemiology and communicate the results of our research in a clear, up-to-date way to the people for whom they matter most; residents of Connecticut. "),
             color = "orange",
             fill = TRUE,
@@ -878,7 +883,7 @@ shinyServer(function(input,output){
     content = function(con) {
       write.csv(lineages_daily_sorted,con)
     }
-   )
+  )
   
   output$downloadVariants <- downloadHandler(
     filename = function() {
@@ -915,6 +920,6 @@ shinyServer(function(input,output){
       write.csv(seq_prop,con)
     }
   )
-
-
+  
+  
 })
